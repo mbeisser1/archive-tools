@@ -14,13 +14,13 @@ export ARCHIVE_TOOLS="$HOME/repo/archive-tools/scripts"
 
 | Tool | Used by |
 |------|---------|
-| [exiftool](https://exiftool.org/) | Most scripts |
-| ffmpeg / ffprobe | `compress_large_videos.py`, `convert_images_to_jpg.*` |
-| ImageMagick (`magick`/`convert`) | `convert_images_to_jpg.*`, `images_to_webp.sh` |
-| heif-convert | `convert_images_to_jpg.py` (HEIC) |
-| cwebp / gif2webp | `images_to_webp.sh` |
-| GNU parallel | `images_to_webp.sh` |
-| rar | `rar_archive.sh` |
+| [exiftool](https://exiftool.org/) | rename-exif, images-to-jpg |
+| ffmpeg / ffprobe | images-to-jpg, videos-to-mp4 |
+| ImageMagick (`magick`/`convert`) | images-to-jpg |
+| heif-convert | images-to-jpg (HEIC) |
+| cwebp / gif2webp | images-to-webp.sh |
+| GNU parallel | images-to-webp.sh |
+| rar | rar-archive.sh |
 
 Debian/Ubuntu example:
 
@@ -30,53 +30,76 @@ sudo apt install libimage-exiftool-perl ffmpeg imagemagick webp parallel rar
 
 Python scripts use **stdlib only** — no venv or pip packages.
 
-## Scripts
+## Core tools
 
-### Image conversion
+All three share `-i` / `-o` / `-n` / `--force` / `--log` and write a TSV log (`archive-tools.log` by default).
 
-| Script | Description |
-|--------|-------------|
-| `convert_images_to_jpg.sh` | Recursive non-JPEG → JPEG with EXIF preserved; handles Google Takeout sidecars; parallel `-j` |
-| `convert_images_to_jpg.py` | Python image → JPEG (HEIC/PNG default; `--all-images` for more formats); in-place or mirrored output tree |
+| Script | Purpose |
+|--------|---------|
+| `rename-exif.py` | Rename (in place) or copy with EXIF-based names |
+| `images-to-jpg.py` | Convert images → JPEG with metadata |
+| `videos-to-mp4.py` | Convert/compress videos → H.265 MP4 |
 
-Use the `.sh` script for Takeout sidecar handling. Use the `.py` script for programmatic use or in-place conversion.
+### Unified I/O
 
-### Video compression
+| `-i` | `-o` | Behavior |
+|------|------|----------|
+| file | omitted | Output beside source (rename / convert in place) |
+| file | file | Single output path |
+| file | dir | Output inside directory |
+| dir | omitted | In-place / beside-source for all matches |
+| dir | dir | Mirror tree under output root |
 
-| Script | Description |
-|--------|-------------|
-| `compress_large_videos.py` | Scan tree, filter by size/resolution/fps, H.265 MP4 encode with metadata copy |
+### Examples
 
 ```bash
-compress_large_videos.py -i ./videos --min-size 100M --list-only
-compress_large_videos.py -i ./videos -o ./archive --min-size 50M --above-1080p
+# Rename in place (default)
+rename-exif.py -i ./photos --label cancun_trip
+
+# Copy renamed files to output tree
+rename-exif.py -i ./photos -o ./renamed --label cancun_trip
+
+# Convert images to JPEG beside sources
+images-to-jpg.py -i ./takeout --all-images
+
+# Mirror converted JPEGs to output tree
+images-to-jpg.py -i ./takeout -o ./takeout-jpg --takeout-sidecars
+
+# Compress videos to MP4 in output tree
+videos-to-mp4.py -i ./clips -o ./clips-mp4 --min-size 20M --remux-if-skip
+
+# Dry run
+images-to-jpg.py -i ./photos -n
 ```
 
-### Filename tools
+### TSV log format
+
+Each run writes tab-separated rows with header `timestamp_utc`, `operation`, `status`, `source_path`, `dest_path`, `action`, `message`, `bytes_in`, `bytes_out`. Lines starting with `#` are comments. Parse with `csv.DictReader(..., delimiter='\t')` after skipping `#` lines.
+
+## Other scripts
 
 | Script | Description |
 |--------|-------------|
-| `rename_by_exif.py` | Rename from EXIF capture time. Default: `YYYY-mm-DD__HH-MM-SS-{suffix}.ext`. With `--prefix`: `{PREFIX}-YYYY-mm-DD__HH-MM-SS.ext` |
 | `lowercase_filenames.sh` | Recursively lowercase file basenames |
-
-```bash
-rename_by_exif.py cancun_trip ./photos          # dry run
-rename_by_exif.py --execute cancun_trip ./photos
-rename_by_exif.py --prefix --execute Ava ./photos
-```
-
-### Other
-
-| Script | Description |
-|--------|-------------|
 | `embed_immich_xmp.sh` | Embed Immich `.xmp` sidecars into library media |
-| `images_to_webp.sh` | Batch resize + convert to WebP (run from target directory) |
-| `rar_archive.sh` | Split RAR5 archive with recovery record |
+| `images-to-webp.sh` | Batch resize + convert to WebP (run from target directory) |
+| `rar-archive.sh` | Split RAR5 archive with recovery record |
 
 ## Library modules
 
-`lib/media_convert.py` and `lib/media_metadata.py` live under `scripts/lib/` and are shared by the Python CLIs.
+Importable logic lives in `scripts/lib/` (underscore names). Hyphenated CLI scripts are not Python-importable.
+
+| Module | Purpose |
+|--------|---------|
+| `lib/exif_rename.py` | EXIF read, collision-safe naming |
+| `lib/image_convert.py` | Image iteration, JPEG conversion, Takeout sidecars |
+| `lib/video_convert.py` | Probe, encode, remux, filters |
+| `lib/media_convert.py` | Pixel/format conversion core |
+| `lib/media_metadata.py` | exiftool metadata copy |
+| `lib/io_paths.py` | `-i` / `-o` resolution |
+| `lib/tsv_log.py` | TSV operation log |
+| `lib/cli_common.py` | Shared argparse flags |
 
 ## Consumers
 
-- **message-vault** — `process_media_folder.py` orchestrates `convert_images_to_jpg.py` and `compress_large_videos.py` from this repo.
+- **message-vault** — `process_media_folder.py` imports `lib.image_convert` and `lib.video_convert`.

@@ -1,37 +1,4 @@
-#!/usr/bin/env python3
-"""Compress large video files with ffmpeg (libx265, long-edge resolution cap).
-
-Scans an input tree for videos matching optional filters (size, resolution, fps),
-converts them to MP4, and logs original vs output sizes. For x265, one encode
-using all cores (--jobs 1, the default) is usually fastest end-to-end.
-
-Examples:
-  # Scan cwd, write to archive/ (or archive_1, …), 100 MiB minimum
-  ./scripts/compress_large_videos.py --min-size 100M
-
-  # List clips above 1080p (1440p, 4K, …) over 100 MiB
-  ./scripts/compress_large_videos.py -i ./videos --min-size 100M --above-1080p --list-only
-
-  # List UHD 4K only
-  ./scripts/compress_large_videos.py -i ./videos --min-size 100M --4k --list-only
-
-  # List 60fps clips (fps strictly above 30); compress caps at 30fps by default
-  ./scripts/compress_large_videos.py -i ./videos --fps-above 30 \\
-      --min-size 50M --above-1080p --list-only
-
-  # Re-encode an existing converted MP4 beside the source (new file; original kept)
-  ./scripts/compress_large_videos.py --reencode --file ./archive/foo_convert.mp4 \
-      --max-fps 30 --above-1080p
-
-  # GNU parallel — one heavy encode at a time (recommended)
-  find . -type f -size +100M | parallel -j 1 ./scripts/compress_large_videos.py \\
-      --min-size 100M --output-dir archive --file {}
-
-  # GNU parallel with 2 concurrent encodes on an 8-core box
-  find . -type f -size +100M | parallel -j 2 \\
-      env COMPRESS_FFMPEG_THREADS=4 ./scripts/compress_large_videos.py \\
-      --min-size 100M --output-dir archive --file {}
-"""
+"""Video probe, encode, and remux for MP4 archival output."""
 
 from __future__ import annotations
 
@@ -77,7 +44,7 @@ _SIZE_UNITS = {
     "P": 1024**5,
 }
 
-CONVERT_OUTPUT_MARKER = "_convert.mp4"
+CANONICAL_VIDEO_EXT = ".mp4"
 ABOVE_720P_LONG_EDGE = 1281   # above 1280x720
 ABOVE_1080P_LONG_EDGE = 1921  # above 1920x1080
 UHD_4K_LONG_EDGE = 3840
@@ -375,13 +342,16 @@ def is_video_file(path: Path) -> bool:
 
 
 def is_convert_output_artifact(path: Path) -> bool:
-    """True for script output names like IMG_1144_convert.mp4 (batch scan skip)."""
-    return CONVERT_OUTPUT_MARKER in path.name
+    """Skip files that look like prior encode outputs beside sources."""
+    if path.suffix.casefold() != ".mp4":
+        return False
+    stem = path.stem
+    return stem.endswith("_reencode") or stem.endswith("_convert")
 
 
 def log_skip_convert_artifact(path: Path) -> str:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return f"{ts} SKIP {path} (name contains {CONVERT_OUTPUT_MARKER!r})"
+    return f"{ts} SKIP {path} (prior encode artifact)"
 
 
 def iter_matching_videos(root: Path, criteria: ScanCriteria) -> tuple[list[Path], list[Path]]:
@@ -426,15 +396,16 @@ def output_path_for(
     source: Path,
     input_root: Path,
     output_root: Path,
-    *,
-    suffix: str = "_convert.mp4",
 ) -> Path:
     try:
         rel = source.resolve().relative_to(input_root.resolve())
     except ValueError:
         rel = Path(source.name)
-    out_name = f"{source.stem}{suffix}"
-    return output_root / rel.parent / out_name
+    return output_root / rel.with_suffix(CANONICAL_VIDEO_EXT)
+
+
+def in_place_output_path(source: Path) -> Path:
+    return source.with_suffix(CANONICAL_VIDEO_EXT)
 
 
 
@@ -447,14 +418,17 @@ def reencode_output_path(source: Path, suffix: str) -> Path:
 def resolve_output_path(
     source: Path,
     input_root: Path,
-    output_root: Path,
+    output_root: Path | None,
     *,
     reencode: bool,
     output_suffix: str,
+    in_place: bool,
 ) -> Path:
     if reencode:
         return reencode_output_path(source, output_suffix)
-    return output_path_for(source, input_root, output_root, suffix=output_suffix)
+    if in_place or output_root is None:
+        return in_place_output_path(source)
+    return output_path_for(source, input_root, output_root)
 
 def resolve_thread_budget(
     jobs: int,
@@ -663,7 +637,7 @@ def remux_to_mp4(
 def convert_one(
     source: Path,
     input_root: Path,
-    output_root: Path,
+    output_root: Path | None,
     *,
     max_dimension: int,
     max_fps: float | None,
@@ -677,8 +651,9 @@ def convert_one(
     skip_efficient: bool,
     min_savings_pct: float,
     reencode: bool = False,
-    output_suffix: str = "_convert.mp4",
+    output_suffix: str = CANONICAL_VIDEO_EXT,
     remux_if_skip: bool = False,
+    in_place: bool = False,
 ) -> ConvertResult:
     source = source.resolve()
     dest = resolve_output_path(
@@ -687,6 +662,7 @@ def convert_one(
         output_root,
         reencode=reencode,
         output_suffix=output_suffix,
+        in_place=in_place,
     )
     try:
         orig_bytes = source.stat().st_size
@@ -869,442 +845,52 @@ def _worker(item: tuple) -> ConvertResult:
     return convert_one(path, in_root, out_root, **kw)
 
 
-def build_scan_criteria(args: argparse.Namespace) -> ScanCriteria:
+def build_scan_criteria(
+    *,
+    min_bytes: int = 0,
+    min_long_edge: int | None = None,
+    above_720p: bool = False,
+    above_1080p: bool = False,
+    four_k: bool = False,
+    fps_above: float | None = None,
+) -> ScanCriteria:
     edge_thresholds: list[int] = []
-    if args.min_long_edge is not None:
-        edge_thresholds.append(args.min_long_edge)
-    if args.above_720p:
+    if min_long_edge is not None:
+        edge_thresholds.append(min_long_edge)
+    if above_720p:
         edge_thresholds.append(ABOVE_720P_LONG_EDGE)
-    if args.above_1080p:
+    if above_1080p:
         edge_thresholds.append(ABOVE_1080P_LONG_EDGE)
-    if args.four_k:
+    if four_k:
         edge_thresholds.append(UHD_4K_LONG_EDGE)
-    min_long_edge = max(edge_thresholds) if edge_thresholds else None
+    resolved_edge = max(edge_thresholds) if edge_thresholds else None
     return ScanCriteria(
+        min_bytes=min_bytes,
+        min_long_edge=resolved_edge,
+        fps_above=fps_above,
+    )
+
+
+def build_scan_criteria_from_args(args: argparse.Namespace) -> ScanCriteria:
+    return build_scan_criteria(
         min_bytes=args.min_size,
-        min_long_edge=min_long_edge,
+        min_long_edge=args.min_long_edge,
+        above_720p=args.above_720p,
+        above_1080p=args.above_1080p,
+        four_k=args.four_k,
         fps_above=args.fps_above,
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Compress large videos with ffmpeg (libx265, long-edge resolution cap).",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    filter_group = parser.add_argument_group(
-        "filters (combine with AND; used for scan, --list-only, and --file)"
-    )
-    filter_group.add_argument(
-        "--min-size",
-        "--min_size",
-        type=parse_size,
-        default=0,
-        metavar="SIZE",
-        help="Only files larger than SIZE (e.g. 100M). Default: 0 (no size filter)",
-    )
-    filter_group.add_argument(
-        "--above-720p",
-        dest="above_720p",
-        action="store_true",
-        help=(
-            "Only files with long edge > 1280px (above 720p; 1280x720 excluded)"
-        ),
-    )
-    filter_group.add_argument(
-        "--above-1080p",
-        dest="above_1080p",
-        action="store_true",
-        help=(
-            "Only files with long edge > 1920px (above 1080p: 1440p, 4K, etc.; "
-            "1920x1080 and 1080x1920 are excluded)"
-        ),
-    )
-    filter_group.add_argument(
-        "--4k",
-        dest="four_k",
-        action="store_true",
-        help="Only files with long edge >= 3840px (UHD 4K; stricter than --above-1080p)",
-    )
-    filter_group.add_argument(
-        "--min-long-edge",
-        type=int,
-        default=None,
-        metavar="PX",
-        help="Only files with long edge >= PX (combined with other resolution flags via max)",
-    )
-    filter_group.add_argument(
-        "--fps-above",
-        type=float,
-        default=None,
-        metavar="FPS",
-        help="Only files with fps strictly above FPS (e.g. 30 matches 60fps clips)",
-    )
-    parser.add_argument(
-        "-i",
-        "--input-dir",
-        type=Path,
-        default=Path("."),
-        help="Directory to scan (default: current directory)",
-    )
-    parser.add_argument(
-        "-o",
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Output root (default: archive, or archive_1, archive_2, … in cwd)",
-    )
-    parser.add_argument(
-        "--file",
-        type=Path,
-        default=None,
-        help="Convert a single file (for GNU parallel); use -i for a folder scan",
-    )
-    parser.add_argument(
-        "--jobs",
-        "-j",
-        type=int,
-        default=1,
-        metavar="N",
-        help="Parallel ffmpeg workers (default: 1; best throughput for x265)",
-    )
-    parser.add_argument(
-        "--ffmpeg-threads",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "ffmpeg -threads per encode (default: auto — all cores when --jobs 1, "
-            "else cores/jobs; COMPRESS_FFMPEG_THREADS env for --file / GNU parallel)"
-        ),
-    )
-    parser.add_argument(
-        "--max-dimension",
-        type=int,
-        default=1920,
-        metavar="PX",
-        help=(
-            "Cap the longer video edge in pixels (default: 1920). "
-            "Landscape 4K -> 1920x1080; portrait 1080x1920 is kept as-is"
-        ),
-    )
-    parser.add_argument(
-        "--max-fps",
-        type=float,
-        default=30.0,
-        metavar="FPS",
-        help=(
-            "Cap output fps when source exceeds FPS (default: 30; 24fps sources unchanged). "
-            "Pass 0 to keep source frame rate"
-        ),
-    )
-    parser.add_argument(
-        "--crf",
-        type=int,
-        default=22,
-        help=(
-            "x265 CRF — lower is higher quality (default: 22). "
-            "Try 20 if artifacts remain; 26–28 for smaller files"
-        ),
-    )
-    parser.add_argument(
-        "--preset",
-        default="slow",
-        help=(
-            "x265 preset — slower improves compression at same CRF (default: slow). "
-            "Options: ultrafast, superfast, veryfast, faster, fast, medium, slow, "
-            "slower, veryslow, placebo"
-        ),
-    )
-    parser.add_argument(
-        "--audio-bitrate",
-        default="128k",
-        help="AAC audio bitrate (default: 128k)",
-    )
-    parser.add_argument(
-        "--x265-frame-threads",
-        type=int,
-        default=4,
-        help="x265 frame-threads per encode (default: 4; lower if --jobs > 1)",
-    )
-    parser.add_argument(
-        "--log-file",
-        type=Path,
-        default=None,
-        help="Append log lines here (default: <output-dir>/compress.log)",
-    )
-    parser.add_argument(
-        "--list-only",
-        action="store_true",
-        help="Print matching paths, size, and probe info; then exit",
-    )
-    parser.add_argument(
-        "-n",
-        "--dry-run",
-        action="store_true",
-        help="Show planned conversions without running ffmpeg",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help=(
-            "Re-run encode when output already exists "
-            "(reencode mode: delete the new --output-suffix file only, not the source)"
-        ),
-    )
-    parser.add_argument(
-        "--skip-efficient",
-        action="store_true",
-        help=(
-            "Skip sources already HEVC at or below --max-dimension with moderate bitrate "
-            "(saves time on GoPro-style clips that barely shrink)"
-        ),
-    )
-    parser.add_argument(
-        "--min-savings-pct",
-        type=float,
-        default=0.0,
-        metavar="PCT",
-        help=(
-            "After encode, delete output and keep original if savings below PCT "
-            "(e.g. 15 to skip ~5%% wins like GH010084). With --remux-if-skip, "
-            "stream-copy to MP4 instead of leaving no output"
-        ),
-    )
-    parser.add_argument(
-        "--remux-if-skip",
-        action="store_true",
-        help=(
-            "When re-encode is skipped or not worthwhile (already-efficient HEVC, "
-            "output larger than source, or below --min-savings-pct), stream-copy to "
-            "MP4 instead of writing nothing"
-        ),
-    )
-    parser.add_argument(
-        "--reencode",
-        "--from-converted",
-        dest="reencode",
-        action="store_true",
-        help=(
-            "Re-encode existing converted MP4(s) in place: write a new file beside each "
-            "source (see --output-suffix). Skips --skip-efficient and --min-savings-pct; "
-            "--force removes only the new output, not the source"
-        ),
-    )
-    parser.add_argument(
-        "--output-suffix",
-        default=None,
-        metavar="SUFFIX",
-        help=(
-            "Output filename suffix appended to source stem (default: _reencode.mp4 with "
-            "--reencode, else _convert.mp4 under --output-dir)"
-        ),
-    )
-    return parser
+def result_log_status(result: ConvertResult) -> str:
+    if result.message in ("dry-run", "dry_run"):
+        return "dry_run"
+    return result.status
 
 
-def resolve_candidates(
-    args: argparse.Namespace,
-    input_dir: Path,
-    criteria: ScanCriteria,
-) -> tuple[list[Path] | None, list[Path]]:
-    """Return (candidate paths, skipped _convert.mp4 artifacts) or (None, []) on error."""
-    if args.file:
-        source = args.file.resolve()
-        if not source.is_file():
-            print(f"ERROR: file not found: {source}", file=sys.stderr)
-            return None, []
-        if not is_video_file(source):
-            print(f"ERROR: not a supported video extension: {source}", file=sys.stderr)
-            return None, []
-        probe = probe_video(source) if scan_needs_probe(criteria) else None
-        if not matches_criteria(source, probe, criteria):
-            print(f"SKIP: {source} does not match filters", file=sys.stderr)
-            return [], []
-        return [source], []
-    return iter_matching_videos(input_dir, criteria)
-
-
-def main() -> int:
-    parser = build_parser()
-    args = parser.parse_args()
-    criteria = build_scan_criteria(args)
-    max_fps = args.max_fps if args.max_fps > 0 else None
-    reencode = args.reencode
-    if reencode:
-        output_suffix = args.output_suffix or "_reencode.mp4"
-    else:
-        output_suffix = args.output_suffix or "_convert.mp4"
-
-    input_dir = args.input_dir.resolve()
-    if not input_dir.is_dir():
-        print(f"ERROR: input directory not found: {input_dir}", file=sys.stderr)
-        return 1
-
-    cwd = Path.cwd()
-    if reencode:
-        output_dir = args.output_dir.resolve() if args.output_dir else input_dir
-    else:
-        output_dir = args.output_dir.resolve() if args.output_dir else next_archive_dir(cwd)
-    log_path = args.log_file or (output_dir / "compress.log")
-
-    candidates, skipped_convert = resolve_candidates(args, input_dir, criteria)
-    if candidates is None:
-        return 1
-
-    if skipped_convert:
-        skip_lines = [log_skip_convert_artifact(path) for path in skipped_convert]
-        for line in skip_lines:
-            print(line, file=sys.stderr)
-        if not args.list_only:
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with log_path.open("a", encoding="utf-8") as handle:
-                for line in skip_lines:
-                    handle.write(line + "\n")
-        print(
-            f"# skipped {len(skipped_convert)} _convert.mp4 artifact(s)",
-            file=sys.stderr,
-        )
-
-    if args.list_only:
-        print(f"# filters: {criteria_summary(criteria)}", file=sys.stderr)
-        for path in candidates:
-            try:
-                size_label = format_bytes(path.stat().st_size)
-            except OSError:
-                size_label = "?"
-            probe = probe_video(path)
-            info = probe_summary(probe, args.max_dimension, max_fps=max_fps)
-            line = f"{path}\t{size_label}"
-            if info:
-                line = f"{line}\t{info}"
-            print(line)
-        print(f"# {len(candidates)} file(s)", file=sys.stderr)
-        return 0
-
-    if not candidates:
-        print("No matching files.")
-        return 0
-
-    if not args.list_only and not args.dry_run:
-        print(f"Filters: {criteria_summary(criteria)}", file=sys.stderr)
-        if reencode:
-            print(
-                f"Re-encode mode: output beside each source as stem+{output_suffix!r}",
-                file=sys.stderr,
-            )
-
-    if not args.dry_run and not args.file and not reencode:
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-    jobs = max(1, args.jobs)
-    ffmpeg_threads = args.ffmpeg_threads
-    if args.file and ffmpeg_threads is None:
-        env_val = os.environ.get("COMPRESS_FFMPEG_THREADS")
-        if env_val:
-            try:
-                ffmpeg_threads = int(env_val)
-            except ValueError:
-                print(
-                    f"WARNING: invalid COMPRESS_FFMPEG_THREADS={env_val!r}; ignoring",
-                    file=sys.stderr,
-                )
-
-    budget_jobs = 1 if args.file else jobs
-    ff_threads, frame_threads = resolve_thread_budget(
-        budget_jobs,
-        ffmpeg_threads=ffmpeg_threads,
-        x265_frame_threads=args.x265_frame_threads,
-    )
-    print_thread_budget(budget_jobs, ff_threads, frame_threads)
-
-    work_args = [
-        (
-            path,
-            input_dir,
-            output_dir,
-            {
-                "max_dimension": args.max_dimension,
-                "max_fps": max_fps,
-                "crf": args.crf,
-                "preset": args.preset,
-                "audio_bitrate": args.audio_bitrate,
-                "ffmpeg_threads": ff_threads,
-                "x265_frame_threads": frame_threads,
-                "dry_run": args.dry_run,
-                "force": args.force,
-                "skip_efficient": args.skip_efficient,
-                "min_savings_pct": args.min_savings_pct,
-                "reencode": reencode,
-                "output_suffix": output_suffix,
-                "remux_if_skip": args.remux_if_skip,
-            },
-        )
-        for path in candidates
-    ]
-
-    if not args.dry_run and not args.force:
-        existing = sum(
-            1
-            for path in candidates
-            if resolve_output_path(
-                path,
-                input_dir,
-                output_dir,
-                reencode=reencode,
-                output_suffix=output_suffix,
-            ).is_file()
-        )
-        if existing:
-            print(
-                f"NOTE: {existing} output(s) already exist and will be skipped "
-                f"(use --force to re-encode with new settings)",
-                file=sys.stderr,
-            )
-
-    results: list[ConvertResult] = []
-
-    if jobs == 1 or args.file:
-        for item in work_args:
-            result = _worker(item)
-            line = log_line(result)
-            print(line)
-            if not args.dry_run:
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                with log_path.open("a", encoding="utf-8") as handle:
-                    handle.write(line + "\n")
-            results.append(result)
-    else:
-        print(
-            f"Processing {len(work_args)} file(s) with {jobs} worker(s) -> {output_dir}",
-            file=sys.stderr,
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
-            futures = {pool.submit(_worker, item): item for item in work_args}
-            for future in as_completed(futures):
-                result = future.result()
-                line = log_line(result)
-                print(line, flush=True)
-                with log_path.open("a", encoding="utf-8") as handle:
-                    handle.write(line + "\n")
-                results.append(result)
-
-    ok = sum(1 for r in results if r.status == "ok" and r.message != "dry-run")
-    skipped = sum(1 for r in results if r.status == "skip")
-    errors = sum(1 for r in results if r.status == "error")
-    dry = sum(1 for r in results if r.message == "dry-run")
-
-    print(
-        f"\nDone: {ok} converted, {skipped} skipped, {errors} error(s), {dry} dry-run",
-        file=sys.stderr,
-    )
-    if not args.dry_run and (ok or skipped or errors):
-        print(f"Log: {log_path}", file=sys.stderr)
-
-    return 1 if errors else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+def result_action(result: ConvertResult) -> str:
+    if result.message.startswith("remux") or "remux" in result.message:
+        return "remux"
+    if result.message.startswith("copy"):
+        return "copy"
+    return "convert"
