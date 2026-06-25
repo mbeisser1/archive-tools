@@ -80,7 +80,7 @@ Each run writes tab-separated rows with header `timestamp_utc`, `operation`, `st
 
 | Script | Description |
 |--------|-------------|
-| `lowercase-filenames.sh` | Recursively lowercase file basenames |
+| `files-to-lowercase.py` | Recursively lowercase file basenames (`-d` dir, `-n` dry-run) |
 | `embed-immich-xmp.sh` | Embed Immich `.xmp` sidecars into library media |
 | `images-to-webp.sh` | Batch resize + convert to WebP (run from target directory) |
 | `rar-archive.py` | Split RAR5 archive (`--rr` recovery %, optional `--md` dictionary) |
