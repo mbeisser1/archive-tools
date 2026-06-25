@@ -141,4 +141,4 @@ Importable logic lives in `scripts/lib/` (underscore names). Hyphenated CLI scri
 
 ## Consumers
 
-- **message-vault** — `process_media_folder.py` imports `lib.image_convert` and `lib.video_convert`; `convert_media.py` / `sync_media.py` import `lib.media_convert`; `scripts/*_vcf.sh` and `convert_heic.sh` delegate to CLIs.
+- **message-vault** — `convert-media.py` / `sync-media.py` import `lib.media_convert`; `scripts/*-vcf.sh` and `convert-heic.sh` delegate to CLIs. One-off folder jobs use `images-to-jpg.py` and `videos-to-mp4.py` here directly.
