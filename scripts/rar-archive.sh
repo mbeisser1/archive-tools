@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rar_archive.sh — Create a RAR5 archive with recovery record from a folder
+# rar-archive.sh — Create a RAR5 archive with recovery record from a folder
 #
 # RAR options used:
 #   -ma5    → RAR5 archive format

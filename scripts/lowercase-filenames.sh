@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# lowercase_filenames.sh — Recursively rename files to lowercase basenames
+# lowercase-filenames.sh — Recursively rename files to lowercase basenames
 #
 # Usage:
-#   lowercase_filenames.sh -d DIR [-n]
+#   lowercase-filenames.sh -d DIR [-n]
 
 set -euo pipefail
 

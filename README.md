@@ -80,8 +80,8 @@ Each run writes tab-separated rows with header `timestamp_utc`, `operation`, `st
 
 | Script | Description |
 |--------|-------------|
-| `lowercase_filenames.sh` | Recursively lowercase file basenames |
-| `embed_immich_xmp.sh` | Embed Immich `.xmp` sidecars into library media |
+| `lowercase-filenames.sh` | Recursively lowercase file basenames |
+| `embed-immich-xmp.sh` | Embed Immich `.xmp` sidecars into library media |
 | `images-to-webp.sh` | Batch resize + convert to WebP (run from target directory) |
 | `rar-archive.sh` | Split RAR5 archive with recovery record |
 

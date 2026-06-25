@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# embed_immich_xmp.sh — Embed Immich XMP sidecars into library media files
+# embed-immich-xmp.sh — Embed Immich XMP sidecars into library media files
 #
 # Immich names sidecars photo.jpg.xmp (not photo.xmp). ExifTool pairs them with
 # -tagsfromfile '%d%f.%e.xmp'. Videos are fully rewritten; use free disk space.
 #
 # Usage:
-#   embed_immich_xmp.sh stats
-#   embed_immich_xmp.sh embed [-n] [-d DIR]
-#   embed_immich_xmp.sh verify [-d DIR] [-s N]
-#   embed_immich_xmp.sh delete [-d DIR] [-y]
-#   embed_immich_xmp.sh all [-d DIR] [-y]    # embed, verify, optional delete
+#   embed-immich-xmp.sh stats
+#   embed-immich-xmp.sh embed [-n] [-d DIR]
+#   embed-immich-xmp.sh verify [-d DIR] [-s N]
+#   embed-immich-xmp.sh delete [-d DIR] [-y]
+#   embed-immich-xmp.sh all [-d DIR] [-y]    # embed, verify, optional delete
 
 set -euo pipefail
 

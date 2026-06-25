@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# images_to_webp.sh — Batch resize and convert images to WebP in the current directory
+# images-to-webp.sh — Batch resize and convert images to WebP in the current directory
 #
 # Run from the directory containing source images. Uses GNU parallel.
 #
