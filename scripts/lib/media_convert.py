@@ -67,6 +67,18 @@ MIME_FOR_EXT = {
 }
 
 
+def media_kind(path: Path) -> str | None:
+    """Return image, audio, video, or None for unknown extensions."""
+    ext = path.suffix.lower()
+    if ext in IMAGE_SOURCE_EXTS or ext == CANONICAL_IMAGE_EXT:
+        return "image"
+    if ext in AUDIO_SOURCE_EXTS or ext == CANONICAL_AUDIO_EXT:
+        return "audio"
+    if ext in VIDEO_SOURCE_EXTS or ext == CANONICAL_VIDEO_EXT:
+        return "video"
+    return None
+
+
 def target_extension(path: Path) -> str | None:
     """Return canonical output extension, or None if already canonical."""
     ext = path.suffix.lower()
