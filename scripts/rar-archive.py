@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create RAR5 archives — thin wrapper around rar with fixed archival defaults.
 
-Defaults: -ma5 -htb -m4 -rr2% -v10g -r
+Defaults: -ma5 -htb -m4 -rr2% -v2g (2 GiB) -r
 Optional: -m N, --rr PCT, --md SIZE (e.g. 128m), --prefix, -r false
 """
 
@@ -12,6 +12,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+DEFAULT_VOLUME = "2g"  # lowercase g = GiB (× 1024³), not decimal GB
 
 
 def parse_bool(value: str | bool) -> bool:
@@ -42,6 +44,7 @@ def build_rar_command(
     recurse: bool,
     recovery: str,
     dictionary: str | None,
+    volume: str = DEFAULT_VOLUME,
 ) -> list[str]:
     cmd = [
         "rar",
@@ -50,7 +53,7 @@ def build_rar_command(
         "-htb",
         f"-m{method}",
         f"-rr{recovery}",
-        "-v10g",
+        f"-v{volume}",
     ]
     if dictionary:
         cmd.append(f"-md{dictionary}")
@@ -60,13 +63,31 @@ def build_rar_command(
     return cmd
 
 
-def print_examples(*, stream: object = None) -> None:
+def print_help(*, stream: object = None) -> None:
     out = stream if stream is not None else sys.stdout
     print(
-        """\
+        f"""\
+rar-archive.py — create RAR5 archives
+
+defaults: -ma5 -htb -m4 -rr2% -v2g -r
+          volume size = 2 GiB (lowercase g), not decimal 2 GB (-v2G)
+
+RAR size suffixes (-v volume, --md dictionary):
+  exact   b     bytes
+  binary  k     KiB  (× 1,024)
+          m     MiB  (× 1,024²)
+          g     GiB  (× 1,024³)
+  decimal K     × 1,000
+          M     MB   (× 1,000²)
+          G     GB   (× 1,000³)
+
+  Lowercase = powers of 1024 (IEC: KiB, MiB, GiB).
+  Uppercase = powers of 1000 (SI: KB, MB, GB).
+  Example: -v2g → 2 GiB; -v2G → 2,000,000,000 bytes.
+
 examples:
   rar-archive.py ./photos
-      → photos.rar (defaults: -ma5 -htb -m4 -rr2% -v10g -r)
+      → photos.rar (2 GiB volumes by default)
 
   rar-archive.py --prefix backup ./photos
       → backup-photos.rar
@@ -78,7 +99,7 @@ examples:
       → 10% recovery record instead of default 2%
 
   rar-archive.py --md 128m ./photos
-      → optional 128 MB dictionary (omit for smaller RAM use)
+      → optional 128 MiB dictionary (omit for smaller RAM use)
 
   rar-archive.py -r false ./photos
       → do not recurse into subdirectories
@@ -87,9 +108,13 @@ examples:
     )
 
 
+def print_examples(*, stream: object = None) -> None:
+    print_help(stream=stream)
+
+
 def main() -> int:
     if "-h" in sys.argv or "--help" in sys.argv:
-        print_examples()
+        print_help()
         return 0
 
     parser = argparse.ArgumentParser(add_help=False, usage=argparse.SUPPRESS)
