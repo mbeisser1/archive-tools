@@ -27,7 +27,7 @@ Debian/Ubuntu example:
 sudo apt install libimage-exiftool-perl ffmpeg imagemagick webp rar
 ```
 
-Python scripts use **stdlib only** — no venv or pip packages.
+Python media scripts use **stdlib only** — no venv or pip packages. VCF tools need `phonenumbers` and `vobject` (see [VCF tools](#vcf-tools)).
 
 ## Core tools
 
@@ -81,6 +81,38 @@ images-to-webp.py -i ./photos
 
 When executing with `-x`, each run writes tab-separated rows with header `timestamp_utc`, `operation`, `status`, `source_path`, `dest_path`, `action`, `message`, `bytes_in`, `bytes_out`. Lines starting with `#` are comments. Default log name: `{tool}_YYYY-mm-DD__HH_MM_SS.log`. Parse with `csv.DictReader(..., delimiter='\t')` after skipping `#` lines.
 
+## VCF tools
+
+Validate, merge, dedupe, and subtract vCard contact files by E.164 phone number. Intended for preparing a **good** canonical contacts file before ingest in message-vault or other archives.
+
+First run creates `archive-tools/.venv` and installs `requirements-vcf.txt` when `phonenumbers` / `vobject` are not already importable (message-vault's `.venv` also satisfies this when wrappers delegate).
+
+| Script | Purpose |
+|--------|---------|
+| `vcf-validate.py` | Report or fix E.164 normalization (`--fix` creates `.vcf.bak`) |
+| `vcf-merge.py` | Merge base + secondary VCFs; base wins on overlap |
+| `vcf-dedupe.py` | One named contact per phone; drop unknown/group labels |
+| `vcf-subtract.py` | Remove base entries whose phones appear in an exclude VCF |
+
+```bash
+# Normalize iPhone export
+vcf-validate.py -c US --fix config/contacts.vcf
+
+# Merge Android source VCFs into iPhone base
+vcf-merge.py config/contacts.vcf staging/contacts_gosms.vcf -o config/contacts.merged.vcf
+
+# Preview merge without writing
+vcf-merge.py config/contacts.vcf staging/contacts_gosms.vcf -n
+
+# Dedupe a messy export
+vcf-dedupe.py staging/contacts_raw.vcf -o staging/contacts_clean.vcf
+
+# Remove phones already covered by iPhone export
+vcf-subtract.py staging/combined.vcf config/contacts.vcf -n
+```
+
+Common flags: `-c US` (default region), `-n` (dry-run), `-o PATH` (output), `--no-sms-tag`, `--allow-duplicate-names`.
+
 ## Other scripts
 
 | Script | Description |
@@ -104,7 +136,9 @@ Importable logic lives in `scripts/lib/` (underscore names). Hyphenated CLI scri
 | `lib/tsv_log.py` | TSV operation log |
 | `lib/webp_convert.py` | WebP resize/convert (cwebp, gif2webp, ImageMagick) |
 | `lib/cli_common.py` | Shared argparse flags |
+| `lib/phone.py` | E.164 normalization and contact-name heuristics |
+| `lib/vcf.py` | vCard load/write, validate, merge, dedupe, subtract |
 
 ## Consumers
 
-- **message-vault** — `process_media_folder.py` imports `lib.image_convert` and `lib.video_convert`.
+- **message-vault** — `process_media_folder.py` imports `lib.image_convert` and `lib.video_convert`; `scripts/*_vcf.sh` delegates to `vcf-*.py`.
