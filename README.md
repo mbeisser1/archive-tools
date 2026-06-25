@@ -18,14 +18,13 @@ export ARCHIVE_TOOLS="$HOME/repo/archive-tools/scripts"
 | ffmpeg / ffprobe | images-to-jpg, videos-to-mp4 |
 | ImageMagick (`magick`/`convert`) | images-to-jpg |
 | heif-convert | images-to-jpg (HEIC) |
-| cwebp / gif2webp | images-to-webp.sh |
-| GNU parallel | images-to-webp.sh |
+| cwebp / gif2webp | images-to-webp |
 | rar | rar-archive.py |
 
 Debian/Ubuntu example:
 
 ```bash
-sudo apt install libimage-exiftool-perl ffmpeg imagemagick webp parallel rar
+sudo apt install libimage-exiftool-perl ffmpeg imagemagick webp rar
 ```
 
 Python scripts use **stdlib only** — no venv or pip packages.
@@ -82,7 +81,7 @@ Each run writes tab-separated rows with header `timestamp_utc`, `operation`, `st
 |--------|-------------|
 | `files-to-lowercase.py` | Recursively lowercase file basenames (`-d` dir, `-n` dry-run) |
 | `embed-immich-xmp.sh` | Embed Immich `.xmp` sidecars into library media |
-| `images-to-webp.sh` | Batch resize + convert to WebP (run from target directory) |
+| `images-to-webp.py` | Batch resize + convert to WebP (`--max-dimension`, `--quality`, `-j` jobs) |
 | `rar-archive.py` | Split RAR5 archive (`--rr` recovery %, optional `--md` dictionary) |
 
 ## Library modules
@@ -98,6 +97,7 @@ Importable logic lives in `scripts/lib/` (underscore names). Hyphenated CLI scri
 | `lib/media_metadata.py` | exiftool metadata copy |
 | `lib/io_paths.py` | `-i` / `-o` resolution |
 | `lib/tsv_log.py` | TSV operation log |
+| `lib/webp_convert.py` | WebP resize/convert (cwebp, gif2webp, ImageMagick) |
 | `lib/cli_common.py` | Shared argparse flags |
 
 ## Consumers
