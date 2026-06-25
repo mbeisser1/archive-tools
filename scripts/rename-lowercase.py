@@ -19,10 +19,10 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 examples:
-  files-to-lowercase.py -d ./takeout -n
+  rename-lowercase.py -d ./takeout -n
       → Foobar.JPG becomes foobar.jpg (basename only; dirs unchanged)
 
-  files-to-lowercase.py -d /pool/archive/cloud_backups/immich/upload
+  rename-lowercase.py -d /pool/archive/cloud_backups/immich/upload
 """,
     )
     parser.add_argument("-d", metavar="DIR", required=True, help="Root directory")
