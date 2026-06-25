@@ -6,6 +6,15 @@ import argparse
 from pathlib import Path
 
 
+def add_execute_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-x",
+        "--execute",
+        action="store_true",
+        help="Apply changes (default: dry-run preview on stdout, no log file)",
+    )
+
+
 def add_io_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-i",
@@ -21,12 +30,7 @@ def add_io_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Output file or directory (optional; default is in-place / beside source)",
     )
-    parser.add_argument(
-        "-n",
-        "--dry-run",
-        action="store_true",
-        help="Plan only; no writes",
-    )
+    add_execute_arg(parser)
     parser.add_argument(
         "--force",
         action="store_true",
@@ -37,7 +41,7 @@ def add_io_args(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=None,
         metavar="FILE",
-        help="TSV log path (default: archive-tools.log beside output or input)",
+        help="TSV log path when executing (default: {tool}_YYYY-mm-DD__HH_MM_SS.log)",
     )
     parser.add_argument(
         "--list-only",

@@ -31,12 +31,15 @@ Python scripts use **stdlib only** — no venv or pip packages.
 
 ## Core tools
 
-All three share `-i` / `-o` / `-n` / `--force` / `--log` and write a TSV log (`archive-tools.log` by default).
+`rename-exif`, `images-to-jpg`, `images-to-webp`, `rename-lowercase`, and `videos-to-mp4` default to **dry-run**: planned changes print to stdout, no log file. Pass **`-x` / `--execute`** to apply changes; execute mode writes a TSV log only (no per-line stdout), defaulting to `{tool}_YYYY-mm-DD__HH_MM_SS.log` beside the output or input.
+
+The three directory tools share `-i` / `-o` / `-x` / `--force` / `--log`.
 
 | Script | Purpose |
 |--------|---------|
 | `rename-exif.py` | Rename (in place) or copy with EXIF-based names |
 | `images-to-jpg.py` | Convert images → JPEG with metadata |
+| `images-to-webp.py` | Resize + convert images → WebP |
 | `videos-to-mp4.py` | Convert/compress videos → H.265 MP4 |
 
 ### Unified I/O
@@ -67,21 +70,23 @@ images-to-jpg.py -i ./takeout -o ./takeout-jpg --takeout-sidecars
 # Compress videos to MP4 in output tree
 videos-to-mp4.py -i ./clips -o ./clips-mp4 --min-size 20M --remux-if-skip
 
-# Dry run
-images-to-jpg.py -i ./photos -n
+# Apply changes (writes TSV log)
+images-to-jpg.py -i ./photos -x --all-images
+
+# Preview only (default)
+images-to-webp.py -i ./photos
 ```
 
 ### TSV log format
 
-Each run writes tab-separated rows with header `timestamp_utc`, `operation`, `status`, `source_path`, `dest_path`, `action`, `message`, `bytes_in`, `bytes_out`. Lines starting with `#` are comments. Parse with `csv.DictReader(..., delimiter='\t')` after skipping `#` lines.
+When executing with `-x`, each run writes tab-separated rows with header `timestamp_utc`, `operation`, `status`, `source_path`, `dest_path`, `action`, `message`, `bytes_in`, `bytes_out`. Lines starting with `#` are comments. Default log name: `{tool}_YYYY-mm-DD__HH_MM_SS.log`. Parse with `csv.DictReader(..., delimiter='\t')` after skipping `#` lines.
 
 ## Other scripts
 
 | Script | Description |
 |--------|-------------|
-| `rename-lowercase.py` | Recursively lowercase file basenames (`-d` dir, `-n` dry-run) |
+| `rename-lowercase.py` | Recursively lowercase file basenames (`-d` dir; `-x` to apply) |
 | `embed-immich-xmp.sh` | Embed Immich `.xmp` sidecars into library media |
-| `images-to-webp.py` | Batch resize + convert to WebP (`--max-dimension`, `--quality`, `-j` jobs) |
 | `rar-archive.py` | Split RAR5 archive (`--rr` recovery %, optional `--md` dictionary) |
 
 ## Library modules

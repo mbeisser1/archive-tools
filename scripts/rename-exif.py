@@ -20,7 +20,7 @@ from lib.exif_rename import (  # noqa: E402
     read_capture_datetime,
     require_exiftool,
 )
-from lib.io_paths import IoPlan, default_log_path, resolve_io  # noqa: E402
+from lib.io_paths import IoPlan, resolve_io, run_log_path  # noqa: E402
 from lib.tsv_log import LogEntry, STATUS_DRY_RUN, STATUS_ERROR, STATUS_OK, STATUS_SKIP, TsvLog  # noqa: E402
 
 
@@ -54,12 +54,13 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     plan = resolve_io(args.input, args.output)
+    dry_run = not args.execute
     log = TsvLog(
         tool="rename-exif.py",
         input_path=plan.input_path,
         output_path=plan.output_root or plan.output_path,
-        dry_run=args.dry_run,
-        log_path=default_log_path(plan, args.log),
+        dry_run=dry_run,
+        log_path=run_log_path("rename-exif", plan, args.log),
     )
 
     try:
@@ -83,7 +84,7 @@ def main() -> int:
         print("No matching media files found.")
         return 0
 
-    if plan.mirror and plan.output_root and not args.dry_run:
+    if plan.mirror and plan.output_root and not dry_run:
         plan.output_root.mkdir(parents=True, exist_ok=True)
 
     for source in sources:
@@ -138,7 +139,7 @@ def main() -> int:
             ))
             continue
 
-        if args.dry_run:
+        if dry_run:
             log.write(LogEntry(
                 operation="rename",
                 status=STATUS_DRY_RUN,

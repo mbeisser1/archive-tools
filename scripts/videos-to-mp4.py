@@ -13,7 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from lib.cli_common import add_io_args  # noqa: E402
-from lib.io_paths import default_log_path, resolve_io  # noqa: E402
+from lib.io_paths import resolve_io, run_log_path  # noqa: E402
 from lib.tsv_log import LogEntry, TsvLog  # noqa: E402
 from lib.video_convert import (  # noqa: E402
     CANONICAL_VIDEO_EXT,
@@ -88,12 +88,13 @@ def main() -> int:
     plan = resolve_io(args.input, args.output)
     criteria = build_scan_criteria_from_args(args)
     max_fps = args.max_fps if args.max_fps > 0 else None
+    dry_run = not args.execute
     log = TsvLog(
         tool="videos-to-mp4.py",
         input_path=plan.input_path,
         output_path=plan.output_root or plan.output_path,
-        dry_run=args.dry_run,
-        log_path=default_log_path(plan, args.log),
+        dry_run=dry_run,
+        log_path=run_log_path("videos-to-mp4", plan, args.log),
     )
 
     candidates = collect_videos(plan, criteria)
@@ -118,7 +119,7 @@ def main() -> int:
         print("No matching video files found.")
         return 0
 
-    if plan.mirror and plan.output_root and not args.dry_run:
+    if plan.mirror and plan.output_root and not dry_run:
         plan.output_root.mkdir(parents=True, exist_ok=True)
 
     jobs = 1 if plan.single_file else max(1, args.jobs)
@@ -146,7 +147,7 @@ def main() -> int:
         "audio_bitrate": args.audio_bitrate,
         "ffmpeg_threads": ff_threads,
         "x265_frame_threads": frame_threads,
-        "dry_run": args.dry_run,
+        "dry_run": dry_run,
         "force": args.force,
         "skip_efficient": args.skip_efficient,
         "min_savings_pct": args.min_savings_pct,

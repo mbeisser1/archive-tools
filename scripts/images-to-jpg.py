@@ -19,7 +19,7 @@ from lib.image_convert import (  # noqa: E402
     dest_jpg_path,
     resolve_extensions,
 )
-from lib.io_paths import default_log_path, resolve_io  # noqa: E402
+from lib.io_paths import resolve_io, run_log_path  # noqa: E402
 from lib.media_convert import DEFAULT_JPEG_QUALITY  # noqa: E402
 from lib.media_metadata import warn_if_missing  # noqa: E402
 from lib.tsv_log import LogEntry, STATUS_DRY_RUN, STATUS_ERROR, STATUS_OK, STATUS_SKIP, TsvLog  # noqa: E402
@@ -71,12 +71,13 @@ def main() -> int:
     warn_if_missing()
     plan = resolve_io(args.input, args.output)
     extensions = resolve_extensions(args.all_images)
+    dry_run = not args.execute
     log = TsvLog(
         tool="images-to-jpg.py",
         input_path=plan.input_path,
         output_path=plan.output_root or plan.output_path,
-        dry_run=args.dry_run,
-        log_path=default_log_path(plan, args.log),
+        dry_run=dry_run,
+        log_path=run_log_path("images-to-jpg", plan, args.log),
     )
 
     items = collect_candidates(
@@ -96,7 +97,7 @@ def main() -> int:
         print("No matching image files found.")
         return 0
 
-    if plan.mirror and plan.output_root and not args.dry_run:
+    if plan.mirror and plan.output_root and not dry_run:
         plan.output_root.mkdir(parents=True, exist_ok=True)
 
     for source, action in items:
@@ -105,7 +106,7 @@ def main() -> int:
             raw, message, bytes_in, bytes_out = convert_image(
                 source,
                 dest,
-                dry_run=args.dry_run,
+                dry_run=dry_run,
                 force=args.force,
                 jpeg_quality=args.jpeg_quality,
             )
@@ -113,12 +114,12 @@ def main() -> int:
             raw, message, bytes_in, bytes_out = copy_jpeg(
                 source,
                 dest,
-                dry_run=args.dry_run,
+                dry_run=dry_run,
                 force=args.force,
             )
 
         if raw in ("ok", "dry_run") and args.takeout_sidecars:
-            copy_takeout_sidecar(source, dest, dry_run=args.dry_run)
+            copy_takeout_sidecar(source, dest, dry_run=dry_run)
 
         log.write(LogEntry(
             operation="image",

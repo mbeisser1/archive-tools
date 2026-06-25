@@ -96,28 +96,36 @@ class TsvLog:
         self._handle.write(f"# input: {self.input_path}\n")
         out = self.output_path if self.output_path else "(in-place)"
         self._handle.write(f"# output: {out}\n")
-        self._handle.write(f"# dry_run: {str(self.dry_run).lower()}\n")
         self._handle.write(f"# started: {self._started.strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
         self._handle.write("\t".join(TSV_COLUMNS) + "\n")
 
     def write(self, entry: LogEntry) -> None:
-        if self._handle is None:
-            self.open()
-        print(entry.human_line())
-        self._handle.write("\t".join(entry.tsv_row()) + "\n")
-        self._handle.flush()
         if entry.status in self._counts:
             self._counts[entry.status] += 1
+        if self.dry_run:
+            print(entry.human_line())
+            return
+        if self._handle is None:
+            self.open()
+        self._handle.write("\t".join(entry.tsv_row()) + "\n")
+        self._handle.flush()
 
     def close(self) -> int:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
         c = self._counts
-        print(
-            f"\nDone: {c['ok']} ok, {c['skip']} skipped, "
-            f"{c['error']} error(s), {c['dry_run']} dry-run",
-            file=sys.stderr,
-        )
-        print(f"Log: {self.log_path}", file=sys.stderr)
+        if self.dry_run:
+            print(
+                f"\nDry-run: {c['dry_run']} planned, {c['skip']} skipped, "
+                f"{c['error']} error(s)",
+                file=sys.stderr,
+            )
+            print("Use -x / --execute to apply changes.", file=sys.stderr)
+        else:
+            print(
+                f"\nDone: {c['ok']} ok, {c['skip']} skipped, {c['error']} error(s)",
+                file=sys.stderr,
+            )
+            print(f"Log: {self.log_path}", file=sys.stderr)
         return 1 if c["error"] else 0

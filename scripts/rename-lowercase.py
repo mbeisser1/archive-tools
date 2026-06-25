@@ -9,6 +9,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from lib.cli_common import add_execute_arg  # noqa: E402
+from lib.io_paths import run_log_path  # noqa: E402
+from lib.tsv_log import LogEntry, STATUS_DRY_RUN, STATUS_ERROR, STATUS_OK, TsvLog  # noqa: E402
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -19,27 +26,34 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 examples:
-  rename-lowercase.py -d ./takeout -n
+  rename-lowercase.py -d ./takeout
       → Foobar.JPG becomes foobar.jpg (basename only; dirs unchanged)
 
-  rename-lowercase.py -d /pool/archive/cloud_backups/immich/upload
+  rename-lowercase.py -d ./takeout -x
+      → apply renames; writes rename-lowercase_YYYY-mm-DD__HH_MM_SS.log
 """,
     )
     parser.add_argument("-d", metavar="DIR", required=True, help="Root directory")
-    parser.add_argument("-n", action="store_true", help="Dry-run — print renames only")
+    add_execute_arg(parser)
+    parser.add_argument(
+        "--log",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="TSV log path when executing (default: rename-lowercase_YYYY-mm-DD__HH_MM_SS.log)",
+    )
     return parser
 
 
-def rename_file(src: Path, *, dry_run: bool) -> str:
-    """Return 'renamed', 'unchanged', or 'conflict'."""
+def rename_file(src: Path, *, dry_run: bool) -> tuple[str, Path | None, str]:
+    """Return status ('renamed', 'unchanged', 'conflict'), dest, and message."""
     lower_name = src.name.lower()
     if src.name == lower_name:
-        return "unchanged"
+        return "unchanged", None, ""
 
     dest = src.parent / lower_name
     if dry_run:
-        print(f"rename: {src} -> {dest}")
-        return "renamed"
+        return "renamed", dest, ""
 
     if dest.exists():
         try:
@@ -48,14 +62,13 @@ def rename_file(src: Path, *, dry_run: bool) -> str:
                     tmp_path = Path(tmp.name)
                 src.rename(tmp_path)
                 tmp_path.rename(dest)
-                return "renamed"
+                return "renamed", dest, ""
         except OSError:
             pass
-        print(f"skip (conflict): {src} -> {dest}", file=sys.stderr)
-        return "conflict"
+        return "conflict", dest, "destination already exists"
 
     src.rename(dest)
-    return "renamed"
+    return "renamed", dest, ""
 
 
 def iter_files_deepest_first(root: Path) -> list[Path]:
@@ -76,33 +89,57 @@ def main() -> int:
         print(f"error: directory not found: {root}", file=sys.stderr)
         return 1
 
+    dry_run = not args.execute
+    log = TsvLog(
+        tool="rename-lowercase.py",
+        input_path=root,
+        output_path=None,
+        dry_run=dry_run,
+        log_path=run_log_path("rename-lowercase", root, args.log),
+    )
+
     print(f"Directory: {root}")
-    if args.n:
+    if dry_run:
         print("Mode:      dry-run")
 
-    renamed = 0
-    conflicts = 0
-    skipped = 0
-
     for path in iter_files_deepest_first(root):
-        result = rename_file(path, dry_run=args.n)
+        bytes_in = None
+        bytes_out = None
+        if not dry_run:
+            try:
+                bytes_in = path.stat().st_size
+            except OSError:
+                pass
+
+        result, dest, message = rename_file(path, dry_run=dry_run)
+        if result == "unchanged":
+            continue
         if result == "renamed":
-            renamed += 1
-        elif result == "conflict":
-            conflicts += 1
-            skipped += 1
+            if not dry_run and dest is not None:
+                try:
+                    bytes_out = dest.stat().st_size
+                except OSError:
+                    pass
+            log.write(LogEntry(
+                operation="lowercase",
+                status=STATUS_DRY_RUN if dry_run else STATUS_OK,
+                source=path,
+                dest=dest,
+                action="rename",
+                bytes_in=bytes_in,
+                bytes_out=bytes_out,
+            ))
+            continue
+        log.write(LogEntry(
+            operation="lowercase",
+            status=STATUS_ERROR,
+            source=path,
+            dest=dest,
+            action="rename",
+            message=message,
+        ))
 
-    print(f"Renamed:   {renamed}")
-    if conflicts:
-        print(f"Conflicts: {conflicts}", file=sys.stderr)
-    if skipped:
-        print(f"Skipped:   {skipped}", file=sys.stderr)
-
-    if conflicts:
-        return 1
-
-    print("Done.")
-    return 0
+    return log.close()
 
 
 if __name__ == "__main__":

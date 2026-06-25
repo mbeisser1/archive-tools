@@ -12,7 +12,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from lib.cli_common import add_io_args  # noqa: E402
-from lib.io_paths import default_log_path, resolve_io  # noqa: E402
+from lib.io_paths import resolve_io, run_log_path  # noqa: E402
 from lib.tsv_log import LogEntry, STATUS_DRY_RUN, STATUS_ERROR, STATUS_OK, TsvLog  # noqa: E402
 from lib.webp_convert import (  # noqa: E402
     DEFAULT_MAX_DIMENSION,
@@ -33,7 +33,7 @@ examples:
   images-to-webp.py -i ./photos
       → photo.jpg becomes photo.webp (max 1024px, quality 80)
 
-  images-to-webp.py -i ./photos --max-dimension 2048 --quality 90 -n
+  images-to-webp.py -i ./photos --max-dimension 2048 --quality 90 -x
 """,
     )
     add_io_args(parser)
@@ -58,12 +58,6 @@ examples:
         default=None,
         metavar="N",
         help=f"Parallel conversions (default: {default_jobs()})",
-    )
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="Suppress per-file progress lines",
     )
     return parser
 
@@ -91,14 +85,15 @@ def main() -> int:
     args = parser.parse_args()
     plan = resolve_io(args.input, args.output)
     jobs = args.jobs if args.jobs is not None else default_jobs()
-    verbose = not args.quiet
+    dry_run = not args.execute
+    verbose = False
 
     log = TsvLog(
         tool="images-to-webp.py",
         input_path=plan.input_path,
         output_path=plan.output_root or plan.output_path,
-        dry_run=args.dry_run,
-        log_path=default_log_path(plan, args.log),
+        dry_run=dry_run,
+        log_path=run_log_path("images-to-webp", plan, args.log),
     )
 
     sources = collect_sources(plan)
@@ -113,7 +108,7 @@ def main() -> int:
         print("No matching image files found.")
         return 0
 
-    if plan.mirror and plan.output_root and not args.dry_run:
+    if plan.mirror and plan.output_root and not dry_run:
         plan.output_root.mkdir(parents=True, exist_ok=True)
 
     def work(source: Path) -> tuple[Path, Path, str, str, int | None, int | None]:
@@ -123,7 +118,7 @@ def main() -> int:
             dest,
             quality=args.quality,
             max_dim=args.max_dimension,
-            dry_run=args.dry_run,
+            dry_run=dry_run,
             verbose=verbose,
         )
         return source, dest, raw, message, bytes_in, bytes_out

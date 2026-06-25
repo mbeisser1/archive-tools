@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -128,13 +129,21 @@ def dest_with_suffix(
     return source.parent / f"{source.stem}{suffix}"
 
 
-def default_log_path(plan: IoPlan, explicit: Path | None) -> Path:
+def log_directory(plan: IoPlan) -> Path:
+    if plan.output_root is not None:
+        return plan.output_root
+    if plan.output_path is not None:
+        return plan.output_path.parent
+    if plan.input_path.is_file():
+        return plan.input_path.parent
+    return plan.input_root
+
+
+def run_log_path(tool: str, base: Path | IoPlan, explicit: Path | None = None) -> Path:
+    """Default log: {tool}_YYYY-mm-DD__HH_MM_SS.log beside output or input."""
     if explicit is not None:
         return explicit.resolve()
-    if plan.output_root is not None:
-        return plan.output_root / "archive-tools.log"
-    if plan.output_path is not None:
-        return plan.output_path.parent / "archive-tools.log"
-    if plan.input_path.is_file():
-        return plan.input_path.parent / "archive-tools.log"
-    return plan.input_root / "archive-tools.log"
+    directory = log_directory(base) if isinstance(base, IoPlan) else base.resolve()
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d__%H_%M_%S")
+    stem = tool.removesuffix(".py")
+    return directory / f"{stem}_{stamp}.log"
