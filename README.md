@@ -20,7 +20,7 @@ export ARCHIVE_TOOLS="$HOME/repo/archive-tools/scripts"
 | heif-convert | images-to-jpg (HEIC) |
 | cwebp / gif2webp | images-to-webp.sh |
 | GNU parallel | images-to-webp.sh |
-| rar | rar-archive.sh |
+| rar | rar-archive.py |
 
 Debian/Ubuntu example:
 
@@ -83,7 +83,7 @@ Each run writes tab-separated rows with header `timestamp_utc`, `operation`, `st
 | `lowercase-filenames.sh` | Recursively lowercase file basenames |
 | `embed-immich-xmp.sh` | Embed Immich `.xmp` sidecars into library media |
 | `images-to-webp.sh` | Batch resize + convert to WebP (run from target directory) |
-| `rar-archive.sh` | Split RAR5 archive with recovery record |
+| `rar-archive.py` | Split RAR5 archive (`--rr` recovery %, optional `--md` dictionary) |
 
 ## Library modules
 
