@@ -118,6 +118,7 @@ Common flags: `-c US` (default region), `-n` (dry-run), `-o PATH` (output), `--n
 | Script | Description |
 |--------|-------------|
 | `rename-lowercase.py` | Recursively lowercase file basenames (`-d` dir; `-x` to apply) |
+| `rename-jpeg.py` | Rename `.jpeg` → `.jpg` with collision-safe suffixes (`-d`, `-x`) |
 | `embed-immich-xmp.sh` | Embed Immich `.xmp` sidecars into library media |
 | `rar-archive.py` | Split RAR5 archive (`--rr` recovery %, optional `--md` dictionary) |
 
