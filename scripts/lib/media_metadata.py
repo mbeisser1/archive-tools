@@ -9,6 +9,9 @@ from pathlib import Path
 
 _warned_missing = False
 
+# ExifTool cannot write MP3 tags; callers should use ffmpeg -map_metadata instead.
+EXIFTOOL_WRITE_UNSUPPORTED = frozenset({".mp3"})
+
 
 def exiftool_available() -> bool:
     return shutil.which("exiftool") is not None
@@ -42,6 +45,8 @@ def copy_metadata(source: Path, dest: Path) -> bool:
         return False
     if not exiftool_available():
         return False
+    if dest.suffix.casefold() in EXIFTOOL_WRITE_UNSUPPORTED:
+        return True
 
     try:
         subprocess.run(
