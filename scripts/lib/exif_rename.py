@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -20,6 +21,9 @@ MEDIA_EXTENSIONS = frozenset({
     "jpg", "jpeg", "png", "tif", "tiff", "heic", "heif", "webp", "gif",
     "mp4", "mov", "avi", "mkv", "m4v", "mpg", "mpeg", "3gp",
 })
+
+EXIF_BATCH_SIZE = 500
+_READY_LINE = "{ready}"
 
 
 def require_exiftool() -> str:
@@ -59,13 +63,122 @@ def parse_exif_datetime(raw: str) -> datetime | None:
     return None
 
 
+def capture_datetime_from_record(record: dict) -> datetime | None:
+    for tag in DATE_TAGS:
+        raw = record.get(tag)
+        if raw is None:
+            continue
+        dt = parse_exif_datetime(str(raw))
+        if dt is not None:
+            return dt
+    return None
+
+
 def read_capture_datetime(exiftool: str, path: Path) -> datetime | None:
+    """Read capture time for one file (slow — prefer ExifToolSession batch reads)."""
     for tag in DATE_TAGS:
         raw = read_exif_raw(exiftool, path, tag)
         if raw is None:
             continue
         return parse_exif_datetime(raw)
     return None
+
+
+class ExifToolSession:
+    """Long-lived exiftool process for batch metadata reads (-stay_open True)."""
+
+    def __init__(self, exiftool: str | None = None) -> None:
+        self._exiftool = exiftool or require_exiftool()
+        self._proc = subprocess.Popen(
+            [self._exiftool, "-stay_open", "True", "-@", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+    def __enter__(self) -> ExifToolSession:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def close(self) -> None:
+        proc = self._proc
+        self._proc = None  # type: ignore[assignment]
+        if proc is None or proc.stdin is None:
+            return
+        try:
+            proc.stdin.write("-stay_open\nFalse\n")
+            proc.stdin.flush()
+            proc.wait(timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            proc.kill()
+
+    def read_capture_datetimes(self, paths: list[Path]) -> dict[Path, datetime | None]:
+        """Batch-read capture datetimes; paths are chunked internally."""
+        if not paths:
+            return {}
+
+        result: dict[Path, datetime | None] = {}
+        for start in range(0, len(paths), EXIF_BATCH_SIZE):
+            chunk = paths[start : start + EXIF_BATCH_SIZE]
+            result.update(self._read_capture_datetimes_batch(chunk))
+        return result
+
+    def _read_capture_datetimes_batch(
+        self, paths: list[Path]
+    ) -> dict[Path, datetime | None]:
+        resolved = [path.resolve() for path in paths]
+        command = [*DATE_TAGS, "-json", *(str(path) for path in resolved), "-execute"]
+        self._send_command(command)
+        payload = self._read_response()
+        return self._parse_json_dates(payload, resolved)
+
+    def _send_command(self, command: list[str]) -> None:
+        if self._proc is None or self._proc.stdin is None:
+            raise RuntimeError("exiftool session is closed")
+        self._proc.stdin.write("\n".join(command) + "\n")
+        self._proc.stdin.flush()
+
+    def _read_response(self) -> str:
+        if self._proc is None or self._proc.stdout is None:
+            raise RuntimeError("exiftool session is closed")
+        lines: list[str] = []
+        while True:
+            line = self._proc.stdout.readline()
+            if line == "":
+                raise RuntimeError("exiftool closed stdout unexpectedly")
+            if line.rstrip() == _READY_LINE:
+                break
+            lines.append(line)
+        return "".join(lines)
+
+    def _parse_json_dates(
+        self, payload: str, paths: list[Path]
+    ) -> dict[Path, datetime | None]:
+        by_path: dict[Path, datetime | None] = {path: None for path in paths}
+        payload = payload.strip()
+        if not payload:
+            return by_path
+
+        try:
+            records = json.loads(payload)
+        except json.JSONDecodeError:
+            return by_path
+
+        if isinstance(records, dict):
+            records = [records]
+
+        for record in records:
+            source_raw = record.get("SourceFile")
+            if not source_raw:
+                continue
+            source = Path(str(source_raw)).resolve()
+            by_path[source] = capture_datetime_from_record(record)
+
+        return by_path
 
 
 def format_stem(dt: datetime) -> str:

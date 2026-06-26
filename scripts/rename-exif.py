@@ -14,10 +14,10 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from lib.cli_common import add_io_args  # noqa: E402
 from lib.exif_rename import (  # noqa: E402
+    ExifToolSession,
     already_renamed_pattern,
     iter_media_files,
     next_available_name,
-    read_capture_datetime,
     require_exiftool,
 )
 from lib.io_paths import IoPlan, resolve_io, run_log_path  # noqa: E402
@@ -64,7 +64,7 @@ def main() -> int:
     )
 
     try:
-        exiftool = require_exiftool()
+        require_exiftool()
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -84,6 +84,12 @@ def main() -> int:
         print("No matching media files found.")
         return 0
 
+    to_process = [source for source in sources if not pattern.match(source.name)]
+    capture_dates: dict[Path, object] = {}
+    if to_process:
+        with ExifToolSession() as session:
+            capture_dates = session.read_capture_datetimes(to_process)
+
     if plan.mirror and plan.output_root and not dry_run:
         plan.output_root.mkdir(parents=True, exist_ok=True)
 
@@ -97,7 +103,7 @@ def main() -> int:
             ))
             continue
 
-        dt = read_capture_datetime(exiftool, source)
+        dt = capture_dates.get(source.resolve())
         if dt is None:
             log.write(LogEntry(
                 operation="rename",
