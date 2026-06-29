@@ -2,19 +2,48 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+from types import ModuleType
 
 from lib.media_metadata import copy_metadata
+
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+
+
+def _load_sibling_lib(name: str) -> ModuleType:
+    path = _SCRIPTS_DIR / "lib" / f"{name}.py"
+    mod_name = f"_archive_tools_{name}"
+    if mod_name in sys.modules:
+        return sys.modules[mod_name]
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load archive-tools module: {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_vt = _load_sibling_lib("video_convert")
+VideoProbe = _vt.VideoProbe
+probe_video = _vt.probe_video
 
 CANONICAL_IMAGE_EXT = ".jpg"
 CANONICAL_AUDIO_EXT = ".mp3"
 CANONICAL_VIDEO_EXT = ".mp4"
 
 DEFAULT_JPEG_QUALITY = 98
+DEFAULT_VIDEO_HEIGHT = 720  # 720p: 1280x720 landscape; 720x1280 portrait
+DEFAULT_VIDEO_MAX_FPS = 30.0
+DEFAULT_VIDEO_CRF = 28
+DEFAULT_VIDEO_PRESET = "medium"
+DEFAULT_VIDEO_AUDIO_BITRATE = "96k"
 
 CANONICAL_EXTS = frozenset(
     {CANONICAL_IMAGE_EXT, CANONICAL_AUDIO_EXT, CANONICAL_VIDEO_EXT}
@@ -220,6 +249,134 @@ def _convert_image_to_jpeg(
     return False
 
 
+def video_720p_scale_filter() -> str:
+    """Scale to 720p: landscape height 720 (e.g. 1280x720); portrait width 720; no upscale."""
+    h = DEFAULT_VIDEO_HEIGHT
+    return (
+        f"scale=w='if(gt(iw\\,ih)\\,-2\\,min(iw\\,{h}))'"
+        f":h='if(gt(iw\\,ih)\\,min(ih\\,{h})\\,-2)'"
+    )
+
+
+def video_fps_filter(
+    probe: VideoProbe | None,
+    max_fps: float = DEFAULT_VIDEO_MAX_FPS,
+) -> str | None:
+    """Cap frame rate only when source exceeds max_fps."""
+    if probe and probe.fps is not None and probe.fps > max_fps:
+        return f"fps={max_fps}"
+    return None
+
+
+def video_filter_chain(
+    probe: VideoProbe | None = None,
+    max_fps: float = DEFAULT_VIDEO_MAX_FPS,
+) -> str:
+    parts = [video_720p_scale_filter()]
+    fps = video_fps_filter(probe, max_fps)
+    if fps:
+        parts.append(fps)
+    return ",".join(parts)
+
+
+def is_video_at_720p_or_below(probe: VideoProbe) -> bool:
+    if probe.width <= 0 or probe.height <= 0:
+        return False
+    h = DEFAULT_VIDEO_HEIGHT
+    if probe.width >= probe.height:
+        return probe.height <= h
+    return probe.width <= h
+
+
+def should_skip_video_reencode(
+    source: Path,
+    probe: VideoProbe | None,
+    *,
+    skip_inefficient: bool,
+) -> bool:
+    """True when an MP4 is already H.264 at 720p with fps <= max (re-encode wasteful)."""
+    if not skip_inefficient:
+        return False
+    if source.suffix.lower() != CANONICAL_VIDEO_EXT:
+        return False
+    if probe is None:
+        return False
+    if probe.codec not in ("h264", "avc1"):
+        return False
+    if not is_video_at_720p_or_below(probe):
+        return False
+    if probe.fps is not None and probe.fps > DEFAULT_VIDEO_MAX_FPS + 0.01:
+        return False
+    return True
+
+
+def ffmpeg_mp4_reencode_cmd(
+    source: Path,
+    dest: Path,
+    probe: VideoProbe | None,
+) -> list[str]:
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-map_metadata",
+        "0",
+        "-vf",
+        video_filter_chain(probe),
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(DEFAULT_VIDEO_CRF),
+        "-preset",
+        DEFAULT_VIDEO_PRESET,
+        "-c:a",
+        "aac",
+        "-b:a",
+        DEFAULT_VIDEO_AUDIO_BITRATE,
+        "-movflags",
+        "+use_metadata_tags",
+        str(dest),
+    ]
+
+
+def reencode_mp4_video(
+    source: Path,
+    *,
+    skip_inefficient: bool = True,
+) -> tuple[Path | None, bool]:
+    """Re-encode MP4 to 720p H.264. Returns (temp_path, skipped_intentionally)."""
+    probe = probe_video(source)
+    if should_skip_video_reencode(source, probe, skip_inefficient=skip_inefficient):
+        return None, True
+    if not _ffmpeg_available():
+        return None, False
+    tmp = temp_output_path(CANONICAL_VIDEO_EXT)
+    try:
+        subprocess.run(
+            ffmpeg_mp4_reencode_cmd(source, tmp, probe),
+            check=True,
+            capture_output=True,
+        )
+        if tmp.stat().st_size == 0:
+            tmp.unlink(missing_ok=True)
+            return None, False
+        copy_metadata(source, tmp)
+        return tmp, False
+    except subprocess.CalledProcessError:
+        tmp.unlink(missing_ok=True)
+        return None, False
+
+
+# Backward-compatible alias (720p scale, no fps cap without probe)
+def video_scale_filter(max_dimension: int = DEFAULT_VIDEO_HEIGHT) -> str:
+    del max_dimension  # 720p uses height/width semantics, not long-edge cap
+    return video_720p_scale_filter()
+
+
 def convert_media(
     source: Path,
     target_ext: str,
@@ -265,30 +422,8 @@ def convert_media(
                 str(tmp),
             ]
         else:
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(source),
-                "-map_metadata",
-                "0",
-                "-c:v",
-                "libx264",
-                "-crf",
-                "28",
-                "-preset",
-                "veryslow",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "96k",
-                "-movflags",
-                "+use_metadata_tags",
-                str(tmp),
-            ]
+            probe = probe_video(source)
+            cmd = ffmpeg_mp4_reencode_cmd(source, tmp, probe)
         subprocess.run(cmd, check=True, capture_output=True)
         if tmp.stat().st_size == 0:
             tmp.unlink(missing_ok=True)
