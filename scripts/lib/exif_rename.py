@@ -6,7 +6,7 @@ import json
 import re
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 DATE_TAGS = ("DateTimeOriginal", "CreateDate", "ModifyDate")
@@ -226,10 +226,7 @@ def next_available_name(
     claimed_slots: set[str],
 ) -> str:
     for bump in range(60):
-        new_second = dt.second + bump
-        if new_second > 59:
-            break
-        candidate_dt = dt.replace(second=new_second)
+        candidate_dt = dt + timedelta(seconds=bump)
         if use_prefix:
             slot = format_stem(candidate_dt)
             name = build_name_prefix_style(label, candidate_dt, ext)
